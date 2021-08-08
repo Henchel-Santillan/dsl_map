@@ -2,6 +2,9 @@
 #define DS_MAP_ENTRY_H
 
 
+#include <utility>
+
+
 namespace dsl::map::details
 {
     template <class Key, class V>
