@@ -47,6 +47,7 @@ namespace dsl::map::details
 
     };  // struct entry
 
+
     template <class Key, class V>
     constexpr void swap(entry<Key, V> &lhs, entry<Key, V> &rhs) noexcept
     { lhs.swap(rhs); }

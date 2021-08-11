@@ -9,7 +9,7 @@
 #include "entry.h"
 
 
-namespace dsl::map::details
+namespace dsl::map::iterators
 {
     template <class Key, class V>
     using entry = details::entry<Key, V>;

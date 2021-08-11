@@ -8,6 +8,7 @@
 
 namespace dsl::map::details
 {
+    // Power of two growth policy
     struct growth_policy
     {
         static constexpr std::size_t compute_index(const std::size_t hash, const std::size_t capacity)

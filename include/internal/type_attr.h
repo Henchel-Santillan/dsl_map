@@ -38,13 +38,13 @@ namespace dsl::map::details
     }   // namespace internal
 
     template<template<class...> class Op, class... Args>
-    using is_detected = typename detail::detector<nonesuch, void, Op, Args...>::value_t;
+    using is_detected = typename internal::detector<nonesuch, void, Op, Args...>::value_t;
 
     template<template<class...> class Op, class... Args>
-    using detected_t = typename detail::detector<nonesuch, void, Op, Args...>::type;
+    using detected_t = typename internal::detector<nonesuch, void, Op, Args...>::type;
 
     template<class Default, template<class...> class Op, class... Args>
-    using detected_or = detail::detector<Default, void, Op, Args...>;
+    using detected_or = internal::detector<Default, void, Op, Args...>;
 
 }   // namespace dsl::map::details
 
