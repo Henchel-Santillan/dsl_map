@@ -136,14 +136,22 @@ namespace dsl::map
 
 
         constexpr V& at(const Key&);
-        constexpr const V& at(const Key&) const;
-        constexpr V& operator[](const Key&);
-        constexpr const V& operator[](const Key&) const;
+        [[nodiscard]] constexpr const V& at(const Key &key) const                 { return at(key); }
 
-        constexpr size_type count(const Key&) const;
-        constexpr iterator find(const Key&);
-        constexpr const_iterator find(const Key&) const;
-        constexpr bool contains(const Key&) const;
+        [[nodiscard]] constexpr V& operator[](const Key &key)                     { return try_emplace(key).first->second; }
+        [[nodiscard]] constexpr const V& operator[](const Key &key) const         { return operator[](key); }
+
+        [[nodiscard]] constexpr size_type count(const Key &key) const
+        { return (std::find_if(begin(), end(), [](entry_type *const curr){ return key_equal(curr->m_key, key); }) != end()) ? 1 : 0; }
+
+        [[nodiscard]] constexpr iterator find(const Key &key)
+        { return std::find_if(begin(), end(), [](entry_type *const curr) { return key_equal(curr->m_key, key); }); }
+
+        [[nodiscard]] constexpr const_iterator find(const Key &key) const
+        { return std::find_if(begin(), end(), [](entry_type *const curr) { return key_equal(curr->m_key, key); }); }
+
+        [[nodiscard]] constexpr bool contains(const Key &key) const
+        { return find(key) != end(); }
 
         std::pair<iterator, iterator> equal_range(const Key&);
         std::pair<const_iterator, const_iterator> equal_range(const Key&) const;
@@ -203,6 +211,7 @@ namespace dsl::map
 
 
     //********* Member Function Implementations *********//
+
     template <class Key, class V, class Hash, class KeyEqual, class Allocator, class GrowthPolicy>
     map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::~map()
     {
@@ -210,7 +219,6 @@ namespace dsl::map
         delete m_entries;
         m_entries = nullptr;
     }
-
 
     template <class Key, class V, class Hash, class KeyEqual, class Allocator, class GrowthPolicy>
     constexpr void map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::swap(
@@ -233,10 +241,35 @@ namespace dsl::map
     template <class Key, class V, class Hash, class KeyEqual, class Allocator, class GrowthPolicy>
     constexpr V& map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::at(const Key &key)
     {
-        size_type i = m_hash(key);
-        if (i <= 0 || i > m_bucket_count)
-            throw std::out_of_range();
+        auto i = m_hash(key);
+        if (i > m_bucket_count || m_entries[i] == nullptr)
+            throw std::out_of_range("Entry with key does not exist.");
+
+        auto it = lbegin(i);
+        while (it != lend())
+        {
+            if (key_equal(it->m_prev->m_next->m_key, key))
+                break;
+            ++it;
+        }
+        return it->m_prev->m_next->m_v;
     }
+
+    template <class Key, class V, class Hash, class KeyEqual, class Allocator, class GrowthPolicy>
+    constexpr std::pair<iterator, iterator> map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::equal_range(const Key &key)
+    {
+        auto it = find(key);
+        return (it == end()) ? return { it, it } : return { it, std::next(it) };
+    }
+
+    template <class Key, class V, class Hash, class KeyEqual, class Allocator, class GrowthPolicy>
+    constexpr std::pair<const_iterator, const_iterator> map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::equal_range(const Key &key) const
+    {
+        auto it = find(key);
+        return (it == end()) ? return { it, it } : return { it, std::next(it) };
+    }
+
+
 
 
     //********* Non-Member Function Implementations *********//
