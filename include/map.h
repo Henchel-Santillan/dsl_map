@@ -20,24 +20,6 @@ namespace dsl::map
     {
         static constexpr const float default_max_load_factor = 1.0f;
 
-        /*template <class Hash>
-        using transparent_key_equal = typename Hash::transparent_key_equal;
-
-
-        // Predicate as used here is similar to map's KeyEqual template parameter
-        template <class Hash, class Predicate>
-        constexpr bool is_transparent_key_equal_v = is_detected<typename Predicate::is_transparent, Hash>::value;
-
-        template <class Hash, class Predicate, class Key, bool = is_transparent_key_equal_v<Hash, Predicate>>
-        struct key_equal
-        { using type = Predicate; };  // struct key_equal
-
-
-        // true-type struct redefinition of the above key_equal
-        template <class Hash, class Predicate, class Key>
-        struct key_equal<Hash, Predicate, Key, true>
-        { using type = typename Hash::transparent_key_equal; };  // struct key_equal*/
-
     }   // namespace details
 
     template <class Key,
@@ -86,8 +68,11 @@ namespace dsl::map
               m_key_equal(equal),
               m_max_load_factor(max_load_factor),
               m_allocator(allocator),
-              m_entries(m_bucket_count <= 0 ? nullptr : std::make_unique<entry_type>(m_bucket_count))
+              m_head(),
+              m_tail_ptr(nullptr),
+              m_entries(m_bucket_count <= 0 ? nullptr : new entry_type*[m_bucket_count])
         {
+            rehash(bucket_count);
         }
 
 
@@ -112,24 +97,42 @@ namespace dsl::map
 
         [[nodiscard]] allocator_type get_allocator() const noexcept         { return m_allocator; }
 
-        size_type bucket_size(size_type n) const;
-        size_type bucket(const Key&) const;
+        [[nodiscard]] size_type bucket_size(const size_type n) const
+        {
+            return (n <= 0 || n > m_bucket_count) ? (m_entries[n] != nullptr) ?
+                : std::distance(lbegin(n), lend())
+                : 0
+                : throw std::out_of_range("'n' must satisfy 0 <= n < bucket_count().");
+        }
 
-        constexpr iterator begin() noexcept                 {  }
-        constexpr const_iterator begin() const noexcept     {  }
-        constexpr const_iterator cbegin() const noexcept    {  }
+        size_type bucket(const Key &key) const                  { return compute_index(m_hash(key), m_bucket_count); }
 
-        constexpr iterator end() noexcept                   {  }
-        constexpr const_iterator end() const noexcept       {  }
-        constexpr const_iterator cend() const noexcept      {  }
+        constexpr iterator begin() noexcept                     { return iterator(&m_head); }
+        constexpr const_iterator begin() const noexcept         { return const_iterator(&m_head); }
+        constexpr const_iterator cbegin() const noexcept        { return begin(); }
 
-        constexpr local_iterator lbegin() noexcept          {  }
-        constexpr const_local_iterator lbegin() const noexcept {}
-        constexpr const_local_iterator clbegin() const noexcept {}
+        constexpr iterator end() noexcept                       { return iterator(m_tail_ptr); }
+        constexpr const_iterator end() const noexcept           { return const_iterator(m_tail_ptr); }
+        constexpr const_iterator cend() const noexcept          { return end(); }
 
-        constexpr local_iterator lend() noexcept          {  }
-        constexpr const_local_iterator lend() const noexcept {}
-        constexpr const_local_iterator clend() const noexcept {}
+        constexpr local_iterator lbegin(const size_type n)
+        {
+            return (n <= 0 || n > m_bucket_count) ?
+                throw std::out_of_range("'n' must satisfy 0 <= n < bucket_count().") : iterator(&(m_entries[n]));
+        }
+
+        constexpr const_local_iterator lbegin(const size_type n) const
+        {
+            return (n <= 0 || n > m_bucket_count) ?
+                throw std::out_of_range("'n' must satisfy 0 <= n < bucket_count().") : const_iterator(&(m_entries[n]));
+        }
+
+        constexpr const_local_iterator clbegin(const size_type n) const
+        { return lbegin(n); }
+
+        constexpr local_iterator lend() noexcept                { return local_iterator(&m_data[node_end_t]); }
+        constexpr const_local_iterator lend() const noexcept    { return const_local_iterator(&m_data[node_end_t]); }
+        constexpr const_local_iterator clend() const noexcept   { return lend(); }
 
 
         constexpr V& at(const Key&);
@@ -145,19 +148,40 @@ namespace dsl::map
         std::pair<iterator, iterator> equal_range(const Key&);
         std::pair<const_iterator, const_iterator> equal_range(const Key&) const;
 
-        hasher hash_function() const;
-        key_equal key_eq() const;
+        constexpr hasher hash_function() const    { return m_hash; }
+        constexpr key_equal key_eq() const        { return m_key_equal; }
 
 
         //*** Modifiers ***//
-        // See slinked_list.h for a guide on the functions to implement
         constexpr void rehash(size_type bucket_count);
+
+        std::pair<iterator, bool> insert(const value_type&);
+        std::pair<iterator, bool> insert(value_type&&);
+
+        template <class ...Args>
+        std::pair<iterator, bool> emplace(Args&&..);
+
+        template <class ...Args>
+        iterator emplace_hint(const_iterator, Args&&...);
+
+        template <class ...Args>
+        std::pair<iterator, bool> try_emplace(const key_type, Args&&...);
+
+        template <class ...Args>
+        std::pair<iterator, bool> try_emplace(key_type&&, Args&&...);
+
+        iterator erase(const_iterator);
+        iterator erase(iterator);
+        iterator erase(const_iterator, const_iterator);
+        size_type erase(const key_type&);
 
 
     private:
         //*** Private Using Directives ***//
         using default_max_load_factor = typename details::default_max_load_factor;
-        using entry_type = details::entry<Key, V>;
+        using entry_type = typename details::entry<Key, V>;
+        using node_end_t = std::numeric_limits<size_type>::max();
+
         using GrowthPolicy::compute_index;
         using GrowthPolicy::compute_closest_capacity;
         using GrowthPolicy::minimum_capacity;
@@ -169,20 +193,60 @@ namespace dsl::map
         Hash                          m_hash;
         float                         m_max_load_factor = default_max_load_factor;
         allocator_type                m_allocator;
-        std::unique_ptr<entry_type[]> m_entries;
+
+        entry_type                    m_head;
+        entry_type                    *m_tail_ptr = nullptr;
+        entry_type                    **m_entries = nullptr;
 
     };  // class map
 
 
 
+    //********* Member Function Implementations *********//
+    template <class Key, class V, class Hash, class KeyEqual, class Allocator, class GrowthPolicy>
+    map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::~map()
+    {
+        erase(begin(), end());
+        delete m_entries;
+        m_entries = nullptr;
+    }
+
+
+    template <class Key, class V, class Hash, class KeyEqual, class Allocator, class GrowthPolicy>
+    constexpr void map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::swap(
+            const map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy> &rhs) noexcept
+    {
+        if (m_allocator == rhs.m_allocator)
+        {
+            using std::swap;
+            swap(rhs.m_bucket_count, m_bucket_count);
+            swap(rhs.m_size, m_size);
+            swap(rhs.m_key_equal, m_key_equal);
+            swap(rhs.m_hash, m_hash);
+            swap(rhs.m_max_load_factor, m_max_load_factor);
+            swap(rhs.m_head, m_head);
+            swap(rhs.m_tail_ptr, m_tail_ptr);
+            swap(rhs.m_entries, m_entries);
+        }
+    }
+
+    template <class Key, class V, class Hash, class KeyEqual, class Allocator, class GrowthPolicy>
+    constexpr V& map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::at(const Key &key)
+    {
+        size_type i = m_hash(key);
+        if (i <= 0 || i > m_bucket_count)
+            throw std::out_of_range();
+    }
+
+
     //********* Non-Member Function Implementations *********//
-    template <Key, V, class Hash, class KeyEqual, class Allocator, class GrowthPolicy>
+    template <class Key, class V, class Hash, class KeyEqual, class Allocator, class GrowthPolicy>
     [[nodiscard]] constexpr bool operator==(const map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy> &lhs,
                                             const map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy> &rhs)
     { return lhs.size() == rhs.size() && std::equal(lhs.begin(), lhs.end(), rhs.begin()); }
 
 
-    template <Key, V, class Hash, class KeyEqual, class Allocator, class GrowthPolicy>
+    template <class Key, class V, class Hash, class KeyEqual, class Allocator, class GrowthPolicy>
     [[nodiscard]] constexpr bool operator!=(const map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy> &lhs,
                                             const map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy> &rhs)
     { return !operator==(lhs, rhs); }

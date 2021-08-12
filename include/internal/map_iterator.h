@@ -7,6 +7,7 @@
 #include <type_traits>
 
 #include "entry.h"
+#include "map.h"
 
 
 namespace dsl::map::iterators
@@ -17,8 +18,7 @@ namespace dsl::map::iterators
     template <class Key,
               class V,
               bool isConst,
-              bool isLocal
-              >
+              bool isLocal>
     class map_iterator
     {
     public:
