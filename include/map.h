@@ -6,7 +6,9 @@
 #include <functional>
 #include <memory>
 #include <memory_resource>
+#include <set>
 #include <stdexcept>
+#include <tuple>
 
 #include "internal/map_iterator.h"
 #include "internal/policy.h"
@@ -81,6 +83,8 @@ namespace dsl::map
             allocator_type allocator = {})
             : map() {}
 
+        // Define move ctor, extended move ctor, operator=
+
 
         ~map();
         constexpr void swap(const map&) noexcept;
@@ -93,13 +97,20 @@ namespace dsl::map
         [[nodiscard]] constexpr size_type max_bucket_count() const noexcept { return std::numeric_limits<size_type>::max(); }
         [[nodiscard]] constexpr float load_factor() const noexcept          { return static_cast<float>(m_size) / m_bucket_count; }
         [[nodiscard]] constexpr float max_load_factor() const noexcept      { return m_max_load_factor; }
-        constexpr void max_load_factor(float ml)                            { m_max_load_factor = ml }
+
+        constexpr void max_load_factor(float ml)
+        {
+            if (ml > 0.0f) {
+                m_max_load_factor = ml;
+                rehash(8u);
+            }
+        }
 
         [[nodiscard]] allocator_type get_allocator() const noexcept         { return m_allocator; }
 
         [[nodiscard]] size_type bucket_size(const size_type n) const
         {
-            return (n <= 0 || n > m_bucket_count) ? (m_entries[n] != nullptr) ?
+            return (n > m_bucket_count) ? (m_entries[n] != nullptr) ?
                 : std::distance(lbegin(n), lend())
                 : 0
                 : throw std::out_of_range("'n' must satisfy 0 <= n < bucket_count().");
@@ -117,13 +128,13 @@ namespace dsl::map
 
         constexpr local_iterator lbegin(const size_type n)
         {
-            return (n <= 0 || n > m_bucket_count) ?
+            return (n > m_bucket_count) ?
                 throw std::out_of_range("'n' must satisfy 0 <= n < bucket_count().") : iterator(&(m_entries[n]));
         }
 
         constexpr const_local_iterator lbegin(const size_type n) const
         {
-            return (n <= 0 || n > m_bucket_count) ?
+            return (n > m_bucket_count) ?
                 throw std::out_of_range("'n' must satisfy 0 <= n < bucket_count().") : const_iterator(&(m_entries[n]));
         }
 
@@ -135,13 +146,13 @@ namespace dsl::map
         constexpr const_local_iterator clend() const noexcept   { return lend(); }
 
 
-        constexpr V& at(const Key&);
+        [[nodiscard]] constexpr V& at(const Key&);
         [[nodiscard]] constexpr const V& at(const Key &key) const                 { return at(key); }
 
         [[nodiscard]] constexpr V& operator[](const Key &key)                     { return try_emplace(key).first->second; }
         [[nodiscard]] constexpr const V& operator[](const Key &key) const         { return operator[](key); }
 
-        [[nodiscard]] constexpr size_type count(const Key &key) const
+        constexpr size_type count(const Key &key) const
         { return (std::find_if(begin(), end(), [](entry_type *const curr){ return key_equal(curr->m_key, key); }) != end()) ? 1 : 0; }
 
         [[nodiscard]] constexpr iterator find(const Key &key)
@@ -163,23 +174,26 @@ namespace dsl::map
         //*** Modifiers ***//
         constexpr void rehash(size_type bucket_count);
 
-        std::pair<iterator, bool> insert(const value_type&);
-        std::pair<iterator, bool> insert(value_type&&);
+        std::pair<iterator, bool> insert(const value_type &value)
+        { return emplace(value); }
+
+        std::pair<iterator, bool> insert(value_type &&value)
+        { return emplace(std::forward<value_type>(value)); }
 
         template <class ...Args>
-        std::pair<iterator, bool> emplace(Args&&..);
+        std::pair<iterator, bool> emplace(Args&&...);
 
         template <class ...Args>
         iterator emplace_hint(const_iterator, Args&&...);
 
         template <class ...Args>
-        std::pair<iterator, bool> try_emplace(const key_type, Args&&...);
+        std::pair<iterator, bool> try_emplace(const key_type&, Args&&...);
 
         template <class ...Args>
         std::pair<iterator, bool> try_emplace(key_type&&, Args&&...);
 
-        iterator erase(const_iterator);
         iterator erase(iterator);
+        iterator erase(const_iterator);
         iterator erase(const_iterator, const_iterator);
         size_type erase(const key_type&);
 
@@ -248,28 +262,225 @@ namespace dsl::map
         auto it = lbegin(i);
         while (it != lend())
         {
-            if (key_equal(it->m_prev->m_next->m_key, key))
+            if (key_equal(it->m_prev->m_next_bucket->m_key, key))
                 break;
             ++it;
         }
-        return it->m_prev->m_next->m_v;
+        return it->m_prev->m_next_bucket->m_v;
     }
 
     template <class Key, class V, class Hash, class KeyEqual, class Allocator, class GrowthPolicy>
-    constexpr std::pair<iterator, iterator> map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::equal_range(const Key &key)
+    constexpr std::pair<map<typename Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::iterator,
+    typename map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::iterator>
+    map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::equal_range(const Key &key)
     {
         auto it = find(key);
-        return (it == end()) ? return { it, it } : return { it, std::next(it) };
+        return (it == end()) ? { it, it } : { it, std::next(it) };
     }
 
     template <class Key, class V, class Hash, class KeyEqual, class Allocator, class GrowthPolicy>
-    constexpr std::pair<const_iterator, const_iterator> map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::equal_range(const Key &key) const
+    constexpr std::pair<typename map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::const_iterator,
+    typename map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::const_iterator>
+    map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::equal_range(const Key &key) const
     {
         auto it = find(key);
-        return (it == end()) ? return { it, it } : return { it, std::next(it) };
+        return (it == end()) ? { it, it } : { it, std::next(it) };
+    }
+
+    template <class Key, class V, class Hash, class KeyEqual, class Allocator, class GrowthPolicy>
+    constexpr void map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::rehash(const typename map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::size_type bucket_count)
+    {
+        count = std::max(minimum_capacity(), count);
+        count = std::max(count, static_cast<size_type>(m_size / m_max_load_factor));
+        count = compute_closest_capacity(count);
+
+        if (count != m_bucket_count)
+        {
+            auto s { std::set<entry_type *const>{} };
+            for (auto it = begin(); it != end(); ++it)
+                s.insert(it->m_prev->m_next_true);
+
+            m_bucket_count = count;
+            erase(begin(), end());
+            delete m_entries;
+            m_entries = new entry_type*[m_bucket_count];
+
+            for (std::set<entry_type *const>::iterator iter = s.begin(); iter != s.end(); ++iter)
+                emplace({*iter.m_key, *iter.m_v)});
+        }
+    }
+
+    template <class Key, class V, class Hash, class KeyEqual, class Allocator, class GrowthPolicy>
+    template <class ...Args>
+    std::pair<typename map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::iterator, bool>
+    map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::emplace(Args &&...args)
+    {
+        auto *node = static_cast<entry_type*>(
+                this->m_allocator.resource()->allocate(sizeof(entry_type), alignof(entry_type)));
+        try
+        {
+            this->m_allocator.construct(std::addressof(node), std::forward<Args(args)...);
+        }
+
+        catch (...)
+        {
+            this->m_allocator.resource()->deallocate(node, sizeof(entry_type), alignof(entry_type));
+            throw;
+        }
+
+        auto index = m_hash(node->m_key);
+        if (m_entries[index] == nullptr)
+            m_entries[index] = ::operator new (node) entry_type(*(node->m_key), *(node->m_v));
+        else
+        {
+            auto it = lbegin(index);
+            while (it != lend())
+            {
+                if (key_equal(it->m_prev->_bucket->m_key, node->m_key))
+                    return { begin() + index, false };  // TODO: map_iterator does not support iterator + (int)
+                ++it;
+            }
+            // [likely out of bounds]
+            it->m_prev->m_next_bucket = node;
+        }
+
+        this->m_size++;
+        return { begin() + index, true };
+    }
+
+    template <class Key, class V, class Hash, class KeyEqual, class Allocator, class GrowthPolicy>
+    template <class ...Args>
+    std::pair<typename map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::iterator, bool>
+    map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::emplace_hint(
+            typename map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::const_iterator hint,
+            Args &&...args)
+    {
+        auto *node = static_cast<entry_type*>(
+                this->m_allocator.resource()->allocate(sizeof(entry_type), alignof(entry_type)));
+        try
+        {
+            this->m_allocator.construct(std::addressof(node), std::forward<Args(args)...);
+        }
+
+        catch (...)
+        {
+            this->m_allocator.resource()->deallocate(node, sizeof(entry_type), alignof(entry_type));
+            throw;
+        }
+
+        auto *curr = hint->m_prev->m_next_bucket;
+        while (curr != nullptr)
+        {
+            if (key_equal(curr->m_key, node->m_key))
+                return { hint, false };
+            curr = curr->m_next_bucket;
+        }
+
+        curr = node;
+        this->m_size++;
+        return { hint, true };
     }
 
 
+    template <class Key, class V, class Hash, class KeyEqual, class Allocator, class GrowthPolicy>
+    template <class ...Args>
+    std::pair<typename map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::iterator, bool>
+    map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::try_emplace(
+            const typename map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::key_type &k,
+            Args &&...args)
+    {
+        return emplace(value_type(std::std::piecewise_construct,
+                                  std::forward_as_tuple(k),
+                                  std::forward_as_tuple(std::forward<Args>(args)...)));
+    }
+
+    template <class Key, class V, class Hash, class KeyEqual, class Allocator, class GrowthPolicy>
+    template <class ...Args>
+    std::pair<typename map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::iterator, bool>
+    map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::try_emplace(
+            typename map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::key_type &&k,
+            Args &&...args)
+    {
+    return emplace(value_type(std::std::piecewise_construct,
+                              std::forward_as_tuple(std::move(k)),
+                              std::forward_as_tuple(std::forward<Args>(args)...)));
+    }
+
+    // Erase methods incorrect: does not search separate chaining
+    // TODO: erase with local_iterator
+    template <class Key, class V, class Hash, class KeyEqual, class Allocator, class GrowthPolicy>
+    typename map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::iterator
+    map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::erase(typename map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::iterator pos)
+    {
+        iterator it = pos;
+        return erase(static_cast<const_iterator>(pos), static_cast<const_iterator>(++it));
+    }
+
+    template <class Key, class V, class Hash, class KeyEqual, class Allocator, class GrowthPolicy>
+    typename map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::iterator
+    map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::erase(typename map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::const_iterator pos)
+    {
+        const_iterator it = pos;
+        return erase(pos, ++it);
+    }
+
+    template <class Key, class V, class Hash, class KeyEqual, class Allocator, class GrowthPolicy>
+    typename map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::iterator
+    map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::erase(typename map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::const_iterator start,
+                                                                typename map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::const_iterator finish)
+    {
+        auto *b = start.m_prev->m_next_true, *e = finish.m_prev->m_next_true;
+        if (e == nullptr)
+            m_tail = start.m_prev;
+        start.m_prev->m_next_true = e;
+
+        auto i = 0;
+
+        while (b != e)
+        {
+            auto *curr = b;
+            b = b->m_next_true;
+            this->m_size--;
+
+            if (key_equal(curr->m_key, m_entries[i]->m_key))
+            {
+                delete curr;    // implicitly calls ::operator delete
+                i++;
+            }
+
+            std::allocator_traits<allocator_type>::destroy(this->m_allocator, std::addressof(*curr));
+            this->m_allocator.resource()->deallocate(curr, sizeof(entry_type), alignof(entry_type));
+        }
+
+        return static_cast<const_iterator>(start);
+    }
+
+    template <class Key, class V, class Hash, class KeyEqual, class Allocator, class GrowthPolicy>
+    typename map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::iterator
+    map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::erase(const typename map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::key_type &k)
+    {
+        auto index = m_hash(k);
+        auto local_it = lbegin(index);
+        while (local_it != lend())
+        {
+            if (key_equal(local_it->m_prev->m_next_bucket->m_key, k))
+                delete curr;
+            ++local_it;
+        }
+        std::allocator_traits<allocator_type>::destroy(this->m_allocator, std::addressof(*(local_it->m_prev->m_next_bucket)));
+        this->m_allocator.resource()->deallocate(local_it->m_prev->m_next_bucket, sizeof(entry_type), alignof(entry_type));
+        this->m_size--;
+
+        auto it = begin();
+        auto c = 0;
+        while (c != index)
+        {
+            ++it;
+            c++;
+        }
+
+        return it;
+    }
 
 
     //********* Non-Member Function Implementations *********//
