@@ -78,12 +78,14 @@ namespace dsl::map
         }
 
 
+        // TODO: add the rest of the constructors
+
         // Copy Constructor
         map(const map &rhs,
             allocator_type allocator = {})
             : map() {}
 
-        // Define move ctor, extended move ctor, operator=
+        // TODO: Define move ctor, extended move ctor, operator=
 
 
         ~map();
@@ -230,7 +232,7 @@ namespace dsl::map
     map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::~map()
     {
         erase(begin(), end());
-        delete m_entries;
+        delete[] m_entries;
         m_entries = nullptr;
     }
 
@@ -302,7 +304,7 @@ namespace dsl::map
 
             m_bucket_count = count;
             erase(begin(), end());
-            delete m_entries;
+            delete[] m_entries;
             m_entries = new entry_type*[m_bucket_count];
 
             for (std::set<entry_type *const>::iterator iter = s.begin(); iter != s.end(); ++iter)
@@ -328,24 +330,24 @@ namespace dsl::map
             throw;
         }
 
-        auto index = m_hash(node->m_key);
-        if (m_entries[index] == nullptr)
-            m_entries[index] = ::operator new (node) entry_type(*(node->m_key), *(node->m_v));
-        else
+        auto it = lbegin(m_hash(node->m_key);
+        while (it->m_prev->m_next_bucket != nullptr)
         {
-            auto it = lbegin(index);
-            while (it != lend())
-            {
-                if (key_equal(it->m_prev->_bucket->m_key, node->m_key))
-                    return { begin() + index, false };  // TODO: map_iterator does not support iterator + (int)
-                ++it;
-            }
-            // [likely out of bounds]
-            it->m_prev->m_next_bucket = node;
+            if (key_equal(it->m_prev->m_next_true->m_key, node->m_key))
+                return { static_cast<iterator>(it), false };
+            ++it;
         }
 
+        if (it->m_prev->m_next_bucket == nullptr && it->m_prev->m_next_true == nullptr)
+        {
+            m_entries[m_hash(node->m_key)] = ::operator new (node) entry_type(node->m_key, node->m_v);
+            it->m_prev->m_next_true = node;
+        }
+        else
+            it->m_prev->m_next_bucket = node;
+
         this->m_size++;
-        return { begin() + index, true };
+        return { static_cast<iterator>(it), true; }
     }
 
     template <class Key, class V, class Hash, class KeyEqual, class Allocator, class GrowthPolicy>
@@ -368,17 +370,24 @@ namespace dsl::map
             throw;
         }
 
-        auto *curr = hint->m_prev->m_next_bucket;
-        while (curr != nullptr)
+        auto it = static_cast<iterator>(hint);
+        while (it->m_prev->m_next_bucket != nullptr)
         {
-            if (key_equal(curr->m_key, node->m_key))
-                return { hint, false };
-            curr = curr->m_next_bucket;
+            if (key_equal(it->m_prev->m_next_true->m_key, node->m_key))
+                return { it, false };
+            ++it;
         }
 
-        curr = node;
+        if (it->m_prev->m_next_bucket == nullptr && it->m_prev->m_next_true == nullptr)
+        {
+            m_entries[m_hash(node->m_key)] = ::operator new (node) entry_type(node->m_key, node->m_v);
+            it->m_prev->m_next_true = node;
+        }
+        else
+            it->m_prev->m_next_bucket = node;
+
         this->m_size++;
-        return { hint, true };
+        return { it, true; }
     }
 
 
@@ -406,8 +415,6 @@ namespace dsl::map
                               std::forward_as_tuple(std::forward<Args>(args)...)));
     }
 
-    // Erase methods incorrect: does not search separate chaining
-    // TODO: erase with local_iterator
     template <class Key, class V, class Hash, class KeyEqual, class Allocator, class GrowthPolicy>
     typename map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::iterator
     map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::erase(typename map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::iterator pos)
@@ -445,6 +452,7 @@ namespace dsl::map
             if (key_equal(curr->m_key, m_entries[i]->m_key))
             {
                 delete curr;    // implicitly calls ::operator delete
+                curr = nullptr;
                 i++;
             }
 
@@ -459,28 +467,30 @@ namespace dsl::map
     typename map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::iterator
     map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::erase(const typename map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::key_type &k)
     {
-        auto index = m_hash(k);
-        auto local_it = lbegin(index);
-        while (local_it != lend())
+        auto it = lbegin(m_hash(k));
+        while (it->m_prev->m_next_bucket != nullptr)
         {
-            if (key_equal(local_it->m_prev->m_next_bucket->m_key, k))
-                delete curr;
-            ++local_it;
-        }
-        std::allocator_traits<allocator_type>::destroy(this->m_allocator, std::addressof(*(local_it->m_prev->m_next_bucket)));
-        this->m_allocator.resource()->deallocate(local_it->m_prev->m_next_bucket, sizeof(entry_type), alignof(entry_type));
-        this->m_size--;
-
-        auto it = begin();
-        auto c = 0;
-        while (c != index)
-        {
+            if (key_equal(m_prev->m_next_bucket->m_key, k))
+                break;
             ++it;
-            c++;
         }
 
-        return it;
+        auto next = false;
+        if (it->m_prev->m_next_bucket == nullptr && key_equal(it->m_prev->m_next_true, k))
+        {
+            m_entries[m_hash(k))] = it->m_prev->m_next_true->m_next;
+            delete it->m_prev->m_next_true;
+            it->m_prev->m_next_true = nullptr;
+            next = true;
+        }
+
+        std::allocator_traits<allocator_type>::destroy(this->m_allocator, std::addressof(next ? *(it->m_prev->m_next_true) : *(it->m_prev->m_next_bucket)));
+        this->m_allocator.resource()->deallocate(next ? it->m_prev->m_next_true : it->m_prev->m_next_bucket, sizeof(entry_type), alignof(entry_type));
+
+        this->m_size--;
+        return static_cast<iterator>(it);
     }
+
 
 
     //********* Non-Member Function Implementations *********//
