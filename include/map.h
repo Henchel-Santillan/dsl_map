@@ -3,6 +3,7 @@
 
 
 #include <algorithm>
+#include <concepts>
 #include <functional>
 #include <memory>
 #include <memory_resource>
@@ -73,20 +74,47 @@ namespace dsl::map
               m_head(),
               m_tail_ptr(nullptr),
               m_entries(m_bucket_count <= 0 ? nullptr : new entry_type*[m_bucket_count])
-        {
-            rehash(bucket_count);
-        }
+        { rehash(bucket_count); }
 
+        map(size_type bucket_count,
+            allocator_type allocator)
+            : map(bucket_count, Hash(), key_equal(), allocator) {}
 
-        // TODO: add the rest of the constructors
+        map(size_type bucket_count,
+            const Hash &hash,
+            allocator_type allocator)
+            : map(bucket_count, hash, key_equal, allocator) {}
+
+        explicit map(allocator_type allocator)
+            : map(minimum_capacity(), Hash(), key_equal(), allocator) {}
+
+        // Missing Constructors: InputIt (requires metaprogramming) and std::initializer_list
 
         // Copy Constructor
         map(const map &rhs,
             allocator_type allocator = {})
-            : map() {}
+            : map(rhs.m_bucket_count,
+                  rhs.m_hash,
+                  rhs.m_key_equal,
+                  allocator)
+        { operator=(rhs); }
 
-        // TODO: Define move ctor, extended move ctor, operator=
+        map(map &&rhs)
+            : map(rhs.m_bucket_count,
+                  rhs.m_hash, rhs.key_equal,
+                  rhs.m_allocator)
+        { operator=(std::move(rhs)); }
 
+        map(map &&rhs,
+            allocator_type allocator)
+            : map(rhs.m_bucket_count,
+                  rhs.m_hash,
+                  rhs.m_key_equal,
+                  allocator)
+        { operator=(std::move(rhs)); }
+
+        map& operator=(const map&);
+        map& operator=(map&&);
 
         ~map();
         constexpr void swap(const map&) noexcept;
@@ -227,6 +255,36 @@ namespace dsl::map
 
 
     //********* Member Function Implementations *********//
+
+    template <class Key, class V, class Hash, class KeyEqual, class Allocator, class GrowthPolicy>
+    map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>&
+    map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::operator=(const map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy> &rhs)
+    {
+        if (this != &rhs)
+        {
+            erase(begin(), end());
+            for (const auto &e : rhs)
+                emplace({e->m_key, e->m_v});
+        }
+        return *this;
+    }
+
+    template <class Key, class V, class Hash, class KeyEqual, class Allocator, class GrowthPolicy>
+    map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>&
+    map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::operator=(map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy> &&rhs)
+    {
+        if (this != &rhs)
+        {
+            if (rhs.m_allocator == m_allocator)
+            {
+                erase(begin(), end());
+                swap(rhs);
+            }
+            else
+                operator=(rhs);
+        }
+        return *this
+    }
 
     template <class Key, class V, class Hash, class KeyEqual, class Allocator, class GrowthPolicy>
     map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::~map()
