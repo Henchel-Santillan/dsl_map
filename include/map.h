@@ -379,7 +379,7 @@ namespace dsl::map
                 this->m_allocator.resource()->allocate(sizeof(entry_type), alignof(entry_type)));
         try
         {
-            this->m_allocator.construct(std::addressof(node), std::forward<Args(args)...);
+            this->m_allocator.construct(std::addressof(node), std::forward<Args>(args)...);
         }
 
         catch (...)
@@ -405,7 +405,7 @@ namespace dsl::map
             it->m_prev->m_next_bucket = node;
 
         this->m_size++;
-        return { static_cast<iterator>(it), true; }
+        return { static_cast<iterator>(it), true }
     }
 
     template <class Key, class V, class Hash, class KeyEqual, class Allocator, class GrowthPolicy>
@@ -419,7 +419,7 @@ namespace dsl::map
                 this->m_allocator.resource()->allocate(sizeof(entry_type), alignof(entry_type)));
         try
         {
-            this->m_allocator.construct(std::addressof(node), std::forward<Args(args)...);
+            this->m_allocator.construct(std::addressof(node), std::forward<Args>(args)...);
         }
 
         catch (...)
@@ -445,7 +445,7 @@ namespace dsl::map
             it->m_prev->m_next_bucket = node;
 
         this->m_size++;
-        return { it, true; }
+        return { it, true }
     }
 
 
@@ -456,7 +456,7 @@ namespace dsl::map
             const typename map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::key_type &k,
             Args &&...args)
     {
-        return emplace(value_type(std::std::piecewise_construct,
+        return emplace(value_type(std::piecewise_construct,
                                   std::forward_as_tuple(k),
                                   std::forward_as_tuple(std::forward<Args>(args)...)));
     }
@@ -468,7 +468,7 @@ namespace dsl::map
             typename map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy>::key_type &&k,
             Args &&...args)
     {
-    return emplace(value_type(std::std::piecewise_construct,
+    return emplace(value_type(std::piecewise_construct,
                               std::forward_as_tuple(std::move(k)),
                               std::forward_as_tuple(std::forward<Args>(args)...)));
     }
@@ -536,7 +536,7 @@ namespace dsl::map
         auto next = false;
         if (it->m_prev->m_next_bucket == nullptr && key_equal(it->m_prev->m_next_true, k))
         {
-            m_entries[m_hash(k))] = it->m_prev->m_next_true->m_next;
+            m_entries[m_hash(k)] = it->m_prev->m_next_true->m_next;
             delete it->m_prev->m_next_true;
             it->m_prev->m_next_true = nullptr;
             next = true;
@@ -568,8 +568,8 @@ namespace dsl::map
     constexpr void swap(const map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy> &lhs,
                         const map<Key, V, Hash, KeyEqual, Allocator, GrowthPolicy> &rhs)
     { lhs.swap(rhs); }
+
+
 }   // namespace dsl::map
-
-
 
 #endif //DS_MAP_MAP_H
