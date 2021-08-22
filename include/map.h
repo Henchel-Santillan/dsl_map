@@ -14,7 +14,6 @@
 #include "internal/map_iterator.h"
 #include "internal/policy.h"
 #include "internal/entry.h"
-#include "internal/type_attr.h"
 
 
 namespace dsl::map
@@ -45,16 +44,16 @@ namespace dsl::map
         using key_equal = KeyEqual;
         using allocator_type = Allocator;
 
-        using value_type = details::entry<Key,V>::pair_t;
+        using value_type = typename details::entry<Key,V>::pair_t;
         using reference = value_type&;
         using const_reference = const value_type&;
         using pointer = std::allocator_traits<Allocator>::pointer;
         using const_pointer = std::allocator_traits<Allocator>::const_pointer;
 
-        using iterator = iterators::map_iterator<Key, V, false, false>;
-        using const_iterator = iterators::map_iterator<Key, V, true, false>;
-        using local_iterator = iterators::map_iterator<Key, V, false, true>;
-        using const_local_iterator = iterators::map_iterator<Key, V, true, true>;
+        using iterator = typename iterators::map_iterator<Key, V, false, false>;
+        using const_iterator = typename iterators::map_iterator<Key, V, true, false>;
+        using local_iterator = typename iterators::map_iterator<Key, V, false, true>;
+        using const_local_iterator = typename iterators::map_iterator<Key, V, true, true>;
 
 
         //*** Member Functions ***//
@@ -146,7 +145,7 @@ namespace dsl::map
                 : throw std::out_of_range("'n' must satisfy 0 <= n < bucket_count().");
         }
 
-        size_type bucket(const Key &key) const                  { return compute_index(m_hash(key), m_bucket_count); }
+        [[nodiscard]] constexpr size_type bucket(const Key &key) const      { return compute_index(m_hash(key), m_bucket_count); }
 
         constexpr iterator begin() noexcept                     { return iterator(&m_head); }
         constexpr const_iterator begin() const noexcept         { return const_iterator(&m_head); }
@@ -182,7 +181,7 @@ namespace dsl::map
         [[nodiscard]] constexpr V& operator[](const Key &key)                     { return try_emplace(key).first->second; }
         [[nodiscard]] constexpr const V& operator[](const Key &key) const         { return operator[](key); }
 
-        constexpr size_type count(const Key &key) const
+        [[nodiscard]] constexpr size_type count(const Key &key) const
         { return (std::find_if(begin(), end(), [](entry_type *const curr){ return key_equal(curr->m_key, key); }) != end()) ? 1 : 0; }
 
         [[nodiscard]] constexpr iterator find(const Key &key)

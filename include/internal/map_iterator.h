@@ -2,7 +2,6 @@
 #define DS_MAP_MAP_ITERATOR_H
 
 
-#include <cstddef>
 #include <iterator>
 #include <type_traits>
 
@@ -36,8 +35,8 @@ namespace dsl::map::iterators
 
         [[nodiscard]] constexpr pointer operator->() const noexcept
         {
-            return (isLocal) ? std::addressof(m_prev->m_next_bucket->pair_t) :
-            std::addressof(m_prev->m_next_true->pair_t);
+            return (isLocal) ? std::addressof(m_prev->m_next_bucket->pair_t)
+                             : std::addressof(m_prev->m_next_true->pair_t);
         }
 
         constexpr map_iterator& operator++() noexcept
