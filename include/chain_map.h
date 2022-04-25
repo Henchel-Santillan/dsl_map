@@ -2,6 +2,7 @@
 #define DSL_CHAIN_MAP_H
 
 
+#include <compare>
 #include <cstddef>
 #include <functional>
 #include <initializer_list>
@@ -17,6 +18,9 @@ namespace dsl {
 
     namespace details_map {
 
+        static constexpr float max_load_factor { 1.0f };
+        static constexpr std::size_t max_bucket_count { std::numeric_limits<std::size_t>::max() };
+
         struct growth_policy {
             static constexpr std::size_t compute_index(const std::size_t hash, const std::size_t capacity) {
                 return hash & (capacity - 1);
@@ -24,18 +28,18 @@ namespace dsl {
 
             static constexpr std::size_t compute_closest_capacity(std::size_t min_capacity) {
                 constexpr auto max_capacity { std::size_t { 1 } << (std::numeric_limits<std::size_t>::digits - 1) };
-                if (min_capacity > max_capacity) 
+                if (min_capacity > max_capacity)
                     return max_capacity;
 
                 min_capacity--;
 
-                for (auto i = 1; i < std::numeric_limits<std::size_t>::digits; i *= 2)
+                for (auto i = 1; i < std::numeric_limits<std::size_t>::digits; i *= 2) 
                     min_capacity |= min_capacity >> i;
-                
+
                 return ++min_capacity;
             }
 
-            static constexpr std::size_t minimum_capacity() { 
+            static constexpr std::size_t minimum_capacity() {
                 return 8u;
             }
         };
@@ -48,66 +52,55 @@ namespace dsl {
 
             using key_type = Key;
             using mapped_type = Value;
-            using value_type = std::pair<const Key, Value>;
+            using value_type = std::pair<const key_type, mapped_type>;
 
 
             //*** Member Functions ***//
 
             chain_map_entry() 
-                : m_key()
-                , m_value()
-                , m_next_entry(nullptr)
-                , m_next_bucket(nullptr) 
+                : m_pair()
+                , m_next_entry_local(nullptr)
+                , m_next_entry_true(nullptr)
             {}
 
-            chain_map_entry(const Key &key, const Value &value) 
-                : m_key(key)
-                , m_value(value)
-                , m_next_entry(nullptr)
-                , m_next_bucket(nullptr)
-            {}
-
-            std::pair<Key, Value> to_pair() {
-                return { m_key, m_value };
-            }
-
-            Key m_key;
-            Value m_value;
-            chain_map_entry<Key, Value> *m_next_entry, *m_next_bucket;
+            value_type m_pair;
+            chain_map_entry<Key, Value> *m_next_entry_local;
+            chain_map_entry<Key, Value> *m_next_entry_true;
         };
+        
 
-
-        template <class Key, class Value, bool isLocal>
+        template <class Key, class Value, bool isLocal> 
         class chain_map_const_iterator {
         public:
 
             //*** Member Types ***//
 
             using entry_t = chain_map_entry<Key, Value>;
-            using pair_t = typename chain_map_entry<Key, Value>::pair_t; 
 
             using iterator_category = std::forward_iterator_tag;
             using difference_type = std::ptrdiff_t;
-            using value_type = pair_t;
+            using value_type = typename entry_t::value_type;
             using pointer = const value_type*;
             using reference = const value_type&;
 
 
             //*** Member Functions ***//
-            
-            explicit chain_map_const_iterator(const entry_t *curr)
-                ; m_curr(const_cast<entry_t*>(curr)) {}
+
+            explicit chain_map_const_iterator(const entry_t *previous) 
+                : m_previous(const_cast<entry_t*>(previous)) {}
 
             [[nodiscard]] constexpr reference operator*() const noexcept {
-                return m_curr->to_pair();
+                auto next = isLocal ? m_previous->m_next_entry_local : m_previous->m_next_entry_true;
+                return next->m_pair;
             }
 
             [[nodiscard]] constexpr pointer operator->() const noexcept {
-                return std::addressof(m_curr->to_pair());
+                auto next = isLocal ? m_previous->m_next_entry_local : m_previous->m_next_entry_true;
+                return std::addressof(next->m_pair);
             }
 
             constexpr chain_map_const_iterator& operator++() noexcept {
-                m_curr = (isLocal) ? m_curr->m_next_entry : m_curr->m_next_bucket;
+                m_previous = isLocal ? m_previous->m_next_entry_local : m_previous->m_next_entry_true;
                 return *this;
             }
 
@@ -120,7 +113,7 @@ namespace dsl {
             [[nodiscard]] constexpr auto operator<=>(const chain_map_const_iterator&) const noexcept = default;
 
         protected:
-            entry_t *m_curr;
+            entry_t *m_previous;
         };
 
 
@@ -130,23 +123,26 @@ namespace dsl {
 
             //*** Member Types ***//
 
-            using base_t = chain_map_const_iterator<Key, Value, isLocal>
+            using base_t = chain_map_const_iterator<Key, Value, isLocal>;
+
             using value_type = typename base_t::value_type;
+            using reference = value_type&;
             using pointer = value_type*;
-            using reference = value_type&;           
 
 
             //*** Member Functions ***//
- 
-            explicit chain_map_iterator(const base_t::entry_t *curr)
-                : base_t(curr) {}
+
+            explicit chain_map_iterator(const base_t::entry_t *previous)
+                : base_t(previous) {}
 
             [[nodiscard]] constexpr reference operator*() const noexcept {
-                return this->m_curr->toPair();
+                auto next = isLocal ? m_previous->m_next_entry_local : m_previous->m_next_entry_true;
+                return next->m_pair;
             }
 
             [[nodiscard]] constexpr pointer operator->() const noexcept {
-                return std::addressof(this->m_curr->toPair());
+                auto next = isLocal ? m_previous->m_next_entry_local : m_previous->m_next_entry_true;
+                return std::addressof(next->m_pair);
             }
 
             constexpr chain_map_iterator& operator++() noexcept {
@@ -160,7 +156,7 @@ namespace dsl {
                 return it;
             }
         };
-
+        
     }   // namespace details_map
 
 
@@ -183,7 +179,7 @@ namespace dsl {
 
         using hasher = Hash;
         using key_equal = KeyEqual;
-        using allocator_type = std::pmr::polymorphic_allocator<value_type>;
+        using allocator_type = std::pmr::polymorphic_allocator<std::byte>;
 
         using reference = value_type&;
         using const_reference = const value_type&;
@@ -204,10 +200,12 @@ namespace dsl {
             : m_allocator(allocator) 
             , m_size(0)
             , m_bucket_count(GrowthPolicy::minimum_capacity())
-            , m_bucket_interface(static_cast<value_type*>(m_allocator.resource()->allocate(sizeof(value_type) * m_bucket_count, alignof(value_type))))
-            , m_max_load_factor(1.0) 
+            , m_max_load_factor(details_map::max_load_factor)
             , m_hash(Hash())
             , m_equal(key_equal())
+            , m_head()
+            , m_tail(nullptr)
+            , m_entries(nullptr)
         {}
 
         explicit chain_map(const size_type bucket_count, 
@@ -297,13 +295,14 @@ namespace dsl {
         { operator=(std::move(other)); }
 
         chain_map(chain_map &&other) 
-            : chain_map(other. other.get_allocator())
+            : chain_map(other, other.get_allocator())
         {}
 
 
         //* Destructor *//
         ~chain_map() {
             erase(begin(), end());
+            m_entries = nullptr;
         }
 
 
@@ -320,27 +319,27 @@ namespace dsl {
         //* Iterators *//
 
         iterator begin() noexcept {
-            return iterator(m_bucket_interface[0]);
+            return iterator(m_head.m_next_entry_true);
         }
 
         const_iterator begin() const noexcept {
-            return const_iterator(m_bucket_interface[0]);
+            return const_iterator(m_head.m_next_entry_true);
         }
 
         const_iterator cbegin() const noexcept {
-            return const_iterator(m_bucket_interface[0]);
+            return const_iterator(m_head.m_next_entry_true);
         }
 
         iterator end() noexcept {
-            return iterator(m_bucket_interface[m_bucket_count]);
+            return iterator(m_tail);
         }
 
         const_iterator end() const noexcept {
-            return const_iterator(m_bucket_interface[m_bucket_count]);
+            return const_iterator(m_tail);
         }
 
         const_iterator cend() const noexcept {
-            return const_iterator(m_bucket_interface[m_bucket_count]);
+            return const_iterator(m_tail);
         }
 
 
@@ -429,6 +428,8 @@ namespace dsl {
         Value& operator[](Key&&);
 
         size_type count(const Key&) const;
+        iterator find(const Key &key);
+        const_iterator find(const Key &key) const;
         bool contains(const Key&) const;
 
         std::pair<iterator, iterator> equal_range(const Key&);
@@ -437,48 +438,308 @@ namespace dsl {
 
         //* Bucket Interface *//
 
-        local_iterator begin(size_type);
-        const_local_iterator begin(size_type) const;
-        const_local_iterator cbegin(size_type) const;
+        local_iterator begin(size_type n) {
+            return local_iterator(m_entries[n]);
+        }
 
-        local_iterator end(size_type);
-        const_local_iterator end(size_type) const;
-        const_local_iterator cend(size_type) const;
+        const_local_iterator begin(size_type) const {
+            return const_local_iterator(m_entries[n]);
+        }
 
-        size_type bucket_count() const;
-        size_type max_bucket_count() const;
-        size_type bucket_size(size_type) const;
-        size_type bucket(const Key&) const;
+        const_local_iterator cbegin(size_type) const {
+            return const_local_iterator(m_entries[n]);
+        }
+
+        local_iterator end(size_type) {
+            return local_iterator(m_entries[node_end_index]);
+        }
+
+        const_local_iterator end(size_type) const {
+            return const_local_iterator(m_entries[node_end_index]);
+        }
+
+        const_local_iterator cend(size_type) const {
+            return const_local_iterator(m_entries[node_end_index]);
+        }
+
+        size_type bucket_count() const {
+            return m_bucket_count;
+        }
+
+        size_type max_bucket_count() const {
+            return details_map::max_bucket_count;
+        }
+
+        size_type bucket_size(size_type n) const {
+            auto size = 0;
+            auto it = begin(n);
+            while (it != end(n)) {
+                ++size;
+                ++it;
+            }
+            return size;
+        }
+
+        size_type bucket(const Key &key) const {
+            return m_hash(key);
+        }
 
 
         //* Hash Policy *//
 
-        float load_factor() const;
-        float max_load_factor() const;
-        void max_load_factor(float ml);
+        float load_factor() const {
+            return size() / bucket_count();
+        }
+
+        float max_load_factor() const {
+            return m_max_load_factor;
+        }
+
+        void max_load_factor(float ml) {
+            m_max_load_factor = ml;
+        }
+
         void rehash(size_type);
         void reserve(size_type);
 
 
         //* Observers *//
 
-        hasher hash_function() const;
-        key_equal key_eq() const;
+        hasher hash_function() const {
+            return m_hash;
+        }
+
+        key_equal key_eq() const {
+            return m_equal;
+        }
         
 
     private:
+
+        //*** Using Directives ***//
+
+        using node_end_index = std::numeric_limits<difference_type>::max();
+
+        using node_type = typename details_map::chain_map_entry<Key, Value>;
+        using GrowthPolicy::compute_index;
+        using GrowthPolicy::compute_closest_capacity;
+        using GrowthPolicy::minimum_capacity;
+
+
+        //*** Members ***//
+
         allocator_type m_allocator;
 
         size_type m_size;
         size_type m_bucket_count;
 
-        value_type *m_bucket_interface;
-
         float m_max_load_factor;
 
         Hash m_hash;
         key_equal m_equal;
+
+        node_type m_head;
+        node_type *m_tail;
+        node_type **m_entries;
+
+    
+        //* Private Functions *//
+
+        template <class M>
+        void assign_to_mapped_type(const Key &k, M &&obj);
+        
+        template <class M>
+        void assign_to_mapped_type(Key &&k, M &&obj);
     };
+
+
+    //****** Member Function Implementations ******//
+
+    //*** Private ***//
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    template <class M>
+    void chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::assign_to_mapped_type(const Key &k, M &&obj) {
+        for (auto it = begin(n); it != end(n); ++it) {
+            if (key_equal((*it).first, k)) 
+                (*it).second = std::forward<M>(obj);
+        }        
+    }
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    template <class M>
+    void chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::assign_to_mapped_type(Key &&k, M &&obj) {
+        assign_to_mapped_type(std::move(k), obj);
+    }
+
+    //*** Public ***//
+
+    //* Modifiers *//
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    void chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::clear() noexcept {
+        erase(begin(), end());
+    }
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    std::pair<chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::iterator, bool> chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::insert(const value_type &value) {
+        return emplace(value);
+    }
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    std::pair<chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::iterator, bool> chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::insert(value_type &&value) {
+        return emplace(std::move(value));
+    }    
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    template <class P>
+    std::pair<chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::iterator, bool> chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::insert(P &&value) {
+        return emplace(std::forward<P>(value));
+    }    
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::iterator chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::insert(const_iterator hint, const value_type &value) {
+        return emplace_hint(hint, value);
+    }
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::iterator chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::insert(const_iterator hint, value_type &&value) {
+        return emplace_hint(hint, std::move(value));
+    }
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    template <class P>
+    chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::iterator chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::insert(const_iterator hint, P &&value) {
+        return emplace_hint(hint, std::forward<P>(value));
+    }
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    template <class InputIt>
+    void chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::insert(InputIt first, InputIt last) {
+        for (; first != last; ++first) 
+            emplace(*first);
+    }
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    void chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::insert(std::initializer_list<value_type> ilist) {
+        insert(ilist.begin(), ilist.end());
+    }
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    template <class M>
+    std::pair<chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::iterator, bool> chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::insert_or_assign(const Key &k, M &&obj) {
+        auto n = m_hash(k);
+        if (n >= bucket_count())
+            return insert(value_type(k, std::forward<M>(obj)));
+
+        assign_to_mapped_type(k, obj);
+    }
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    template <class M>
+    std::pair<chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::iterator, bool> chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::insert_or_assign(Key &&k, M &&obj) {
+        auto n = m_hash(k);
+        if (n >= bucket_count()) 
+            return insert(value_type(std::move(k), std::forward<M>(obj)));
+
+        assign_to_mapped_type(k, obj);
+    }
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    template <class M>
+    chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::iterator chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::insert_or_assign(const_iterator hint, const Key &k, M &&obj) {
+        auto n = m_hash(k);
+        if (n >= bucket_count())
+            return (hint, value_type(k, std::forward<M>(obj)));
+
+        assign_to_mapped_type(k, obj);     
+    }
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    template <class M>
+    chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::iterator chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::insert_or_assign(const_iterator hint, Key &&k, M &&obj) {
+        auto n = m_hash(k);
+        if (n >= bucket_count()) 
+            return insert(hint, value_type(std::move(k), std::forward<M>(obj)));
+
+        assign_to_mapped_type(k, obj);
+    }
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    template <class... Args>
+    std::pair<chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::iterator, bool> chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::emplace(Args &&...args) {
+        auto entry = static_cast<entry_t*>(m_allocator.resource()->allocate(sizeof(entry_t), alignof(entry_t)));
+    }
+
+
+    //* Lookup *//
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    Value& chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::at(const Key &key) {
+        auto n = m_hash(key);
+        if (n >= bucket_count() >= || m_entries[n] == nullptr)
+            throw std::out_of_range("Key does not exist in the chain_map.");
+        
+        auto it = begin(n);
+        while (it != end(n)) {
+            if (key_equal(key, (*it).first))
+                break; 
+            ++it;
+        }
+
+        return (*it).second;
+    }
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    const Value& chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::at(const Key &key) const {
+        return at(key);
+    }
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    Value& chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::operator[](const Key &key) {
+        return try_emplace(key).first->second;
+    }
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    Value& chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::operator[](Key &&key) {
+        return try_emplace(std::move(key)).first->second;
+    }    
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::size_type chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::count(const Key &key) const {
+        return contains(key) ? 1 : 0;
+    }
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::iterator chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::find(const Key &key) {
+        return std::find_if(begin(), end(), [](node_type node) { return key_equal(node->m_pair.first, key); });
+    }
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::const_iterator chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::find(const Key &key) const {
+        return std::find_if(begin(), end(), [](node_type node) { return key_equal(node->m_pair.first, key); });        
+    }
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    bool chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::contains(const Key &key) const {
+        return find(key) != end();
+    }
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    std::pair<chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::iterator, chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::iterator> chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::equal_range(const Key &key) {
+        auto it = find(key);
+        return it != end() ? { it, std::next(it) } : { it, it };
+    }
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    std::pair<chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::const_iterator, chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::const_iterator> chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::equal_range(const Key &key) {
+        auto it = find(key);
+        return it != end() ? { it, std::next(it) } : { it, it };
+    }
+
+
+    //* Hash Policy *//
+
 
 }   // namespace dsl
 
