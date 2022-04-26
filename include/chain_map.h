@@ -470,15 +470,7 @@ namespace dsl {
             return details_map::max_bucket_count;
         }
 
-        size_type bucket_size(size_type n) const {
-            auto size = 0;
-            auto it = begin(n);
-            while (it != end(n)) {
-                ++size;
-                ++it;
-            }
-            return size;
-        }
+        size_type bucket_size(size_type) const;
 
         size_type bucket(const Key &key) const {
             return m_hash(key);
@@ -550,6 +542,8 @@ namespace dsl {
         
         template <class M>
         void assign_to_mapped_type(Key &&k, M &&obj);
+
+        void reallocate_exactly(size_type);
     };
 
 
@@ -571,6 +565,20 @@ namespace dsl {
     void chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::assign_to_mapped_type(Key &&k, M &&obj) {
         assign_to_mapped_type(std::move(k), obj);
     }
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    void chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::reallocate_exactly(size_type min_sizes) {
+        constexpr size_type new_cap = compute_closest_capacity(min_size);
+        auto data = static_cast<node_type*>(m_allocator.resource()->allocate(new_cap * sizeof(node_type*), alignof(node_type*)));
+
+        for (auto i = 0; i < size(); ++i) 
+            data[i] = m_entries[i];
+        
+        m_allocator.resource()->deallocate(m_entries, bucket_count * sizeof(node_type*), alignof(node_type*));
+        m_entries = &data;
+        bucket_count = new_cap;
+    }
+
 
     //*** Public ***//
 
@@ -668,9 +676,89 @@ namespace dsl {
     template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
     template <class... Args>
     std::pair<chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::iterator, bool> chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::emplace(Args &&...args) {
-        auto entry = static_cast<entry_t*>(m_allocator.resource()->allocate(sizeof(entry_t), alignof(entry_t)));
+        if (size() + 1 >= max_size())
+            throw std::length_error("Call to emplace() will result in container size exceeding implementation-defined size limit.")
+
+        auto node = static_cast<node_type*>(m_allocator.resource()->allocate(sizeof(node_type), alignof(node_type)));
+        
+        try {
+            m_allocator.construct(std::addressof(node->m_pair), std::forward<Args>(args)...);
+        } catch (...) {
+            m_allocator.resource()->deallocate(node, sizeof(node_type), alignof(node_type));
+            throw;
+        }
+
+        auto n = m_hash(node->m_pair.first);
+        if (bucket_count() <= n && n < max_bucket_count()) 
+            reallocate_exactly(n);  // Increase the bucket count         
+
+        auto node_count = 0;
+        for (auto i = 0; i < n; ++i) 
+            node_count += bucket_size(i);
+        
+        auto it = std::advance(begin(), upto);
+
+        if (m_entries[n] != nullptr) {  // implies local head exists
+            auto local_it = begin(n);
+            for (; local_it != end(n); ++local_it) {
+                if (key_equal((*it).first, node->m_pair.first)) {
+                    std::allocator_traits<allocator_type>::destroy(m_allocator, std::addressof(node->m_pair));
+                    m_allocator.resource()->deallocate(node, sizeof(node_type), alignof(node_type)); 
+                    return { it, false };                   
+                }
+                ++it;
+            }
+
+            // Update local entry next pointers
+            node->m_next_entry_local = it.m_previous->m_next_entry_local->m_next_entry_local;
+            it.m_previous->m_next_entry_local->m_next_entry_local = node;
+
+        } else m_entries[n] = node;
+
+        // Update true entry next pointers
+        node->m_next_entry_true = it.m_previous->m_next_entry_true->m_next_entry_true;
+        it.m_previous->m_next_entry_true->m_next_entry_true = node;
+
+        if (it.m_previous == m_tail) 
+            m_tail = node;
+
+        ++m_size;
+
+        if (size() > max_load_factor() * bucket_count()) 
+            rehash();
+
+        return { it, true };        
     }
 
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    template <class... Args>
+    chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::iterator chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::emplace_hint(const_iterator /* hint */, Args &&...args) {
+        return emplace(std::forward<Args>(args)...).first;
+    }
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    template <class... Args>
+    std::pair<chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::iterator, bool> chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::try_emplace(const Key &key, Args &&...args) {
+        return emplace(value_type(std::piecewise_construct, std::forward_as_tuple(key), std::forward_as_tuple(std::forward<Args>(args)...)));
+    }
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    template <class... Args>
+    std::pair<chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::iterator, bool> chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::try_emplace(Key &&key, Args &&...args) {
+        return emplace(value_type(std::piecewise_construct, std::forward_as_tuple(std::move(key)), std::forward_as_tuple(std::forward<Args>(args)...)));
+    }
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    template <class... Args>
+    chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::iterator chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::try_emplace(const_iterator hint, const Key &key, Args &&...args) {
+        return emplace_hint(hint, value_type(std::piecewise_construct, std::forward_as_tuple(key), std::forward_as_tuple(std::forward<Args>(args)...)));
+    }
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    template <class... Args>
+    chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::iterator chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::try_emplace(const_iterator hint, Key &&key, Args &&...args) {
+        return emplace_hint(hint, value_type(std::piecewise_construct, std::forward_as_tuple(std::move(key)), std::forward_as_tuple(std::forward<Args>(args)...)));
+    }
 
     //* Lookup *//
 
@@ -712,12 +800,12 @@ namespace dsl {
 
     template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
     chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::iterator chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::find(const Key &key) {
-        return std::find_if(begin(), end(), [](node_type node) { return key_equal(node->m_pair.first, key); });
+        return std::find_if(begin(), end(), [](node_type *node) { return key_equal(node->m_pair.first, key); });
     }
 
     template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
     chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::const_iterator chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::find(const Key &key) const {
-        return std::find_if(begin(), end(), [](node_type node) { return key_equal(node->m_pair.first, key); });        
+        return std::find_if(begin(), end(), [](node_type *node) { return key_equal(node->m_pair.first, key); });        
     }
 
     template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
@@ -735,6 +823,20 @@ namespace dsl {
     std::pair<chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::const_iterator, chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::const_iterator> chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::equal_range(const Key &key) {
         auto it = find(key);
         return it != end() ? { it, std::next(it) } : { it, it };
+    }
+
+    
+    //* Bucket Interface *//
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::size_type cjhain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::bucket_size(size_type n) const {
+        auto size = 0;
+        auto it = begin(n);
+        while (it != end(n)) {
+            ++size;
+            ++it;
+        }
+        return size;
     }
 
 
