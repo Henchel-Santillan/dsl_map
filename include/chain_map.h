@@ -301,7 +301,7 @@ namespace dsl {
 
         //* Destructor *//
         ~chain_map() {
-            erase(begin(), end());
+            clear();
             m_entries = nullptr;
         }
 
@@ -567,7 +567,7 @@ namespace dsl {
     }
 
     template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
-    void chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::reallocate_exactly(size_type min_sizes) {
+    void chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::reallocate_exactly(size_type min_size) {
         constexpr size_type new_cap = compute_closest_capacity(min_size);
         auto data = static_cast<node_type*>(m_allocator.resource()->allocate(new_cap * sizeof(node_type*), alignof(node_type*)));
 
@@ -696,7 +696,7 @@ namespace dsl {
         for (auto i = 0; i < n; ++i) 
             node_count += bucket_size(i);
         
-        auto it = std::advance(begin(), upto);
+        auto it = std::advance(begin(), node_count);
 
         if (m_entries[n] != nullptr) {  // implies local head exists
             auto local_it = begin(n);
@@ -759,6 +759,68 @@ namespace dsl {
     chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::iterator chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::try_emplace(const_iterator hint, Key &&key, Args &&...args) {
         return emplace_hint(hint, value_type(std::piecewise_construct, std::forward_as_tuple(std::move(key)), std::forward_as_tuple(std::forward<Args>(args)...)));
     }
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::iterator chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::erase(iterator pos) {
+        return erase(pos);
+    }
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::iterator chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::erase(const_iterator pos) {
+        return erase(pos, std::next(pos));
+    }
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::iterator chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::erase(const_iterator first, const_iterator last) {
+        auto node_first = first.m_previous->m_next;
+        auto node_last = last.m_previous->m_next;
+
+        if (node_last == nullptr) 
+            m_tail = node_first.m_prev;
+
+        node_first.m_prev->m_next = node_last;
+
+        while (node_first != node_last) {
+            auto node_old = node_first;
+            node_first = node_first->m_next;
+            --m_size;
+            std::allocator_traits<allocator_type>::destroy(m_allocator, std::addressof(node_old->m_pair));
+            m_allocator.resource()->deallocate(node_old, sizeof(node_type), alignof(node_type));
+        }
+
+        return dynamic_cast<iterator>(first);
+    }
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::size_type chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::erase(const Key &key) {
+        auto it = find(key);
+        if (it != end()) {
+            erase(it);
+            return 1;
+        }
+        return 0;
+    }
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    void chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::swap(chain_map &other) noexcept {
+        if (m_allocator == other.m_allocator) {
+            auto tail = other.empty() ? &m_head : other.m_tail;
+            auto tail_other = empty() ? &other.m_head : m_tail;
+
+            using std::swap;
+            swap(m_size, other.m_size);
+            swap(m_bucket_count, other.m_bucket_count);
+            swap(m_max_load_factor, other.m_max_load_factor);
+            swap(m_hash, other.m_hash);
+            swap(m_equal, other.m_hash);
+            swap(m_head.m_next, other.m_head.m_next);
+            swap(m_entries, other.m_entries);           // transfer of pointers is conducted in operator= and the copy ctor
+
+            m_tail = tail;
+            other.m_tail = tail_other;
+        }
+    }
+
 
     //* Lookup *//
 
@@ -841,6 +903,9 @@ namespace dsl {
 
 
     //* Hash Policy *//
+
+    template <class Key, class Value, class Hash, class KeyEqual, class GrowthPolicy>
+    void chain_map<Key, Value, Hash, KeyEqual, GrowthPolicy>::rehash(size_type )
 
 
 }   // namespace dsl
