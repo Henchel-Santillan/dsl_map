@@ -1,0 +1,6 @@
+@PACKAGE_INIT@
+
+if (NOT TARGET dsl::chain_map) 
+    include("${CMAKE_CURRENT_LIST_DIR}/dsl_mapTargets.cmake")
+    get_target_property(dsl_map_INCLUDE_DIRS dsl::chain_map INTERFACE_INCLUDE_DIRECTORIES)
+endif()
