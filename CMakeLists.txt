@@ -15,6 +15,15 @@ list(APPEND headers "${CMAKE_CURRENT_SOURCE_DIR}/include/chain_map.h"
                     "${CMAKE_CURRENT_SOURCE_DIR}/include/set.h")
 target_sources(dsl_map INTERFACE "$<BUILD_INTERFACE:${headers}>")
 
+# Add GoogleTest (hash is updatable and can be configured depending on needed version)
+include(FetchContent)
+FetchContent_Declare(googletest 
+                     URL https://github.com/google/googletest/archive/8ded48c37be09d8cc3665af1b414c5d53c0862e7.zip)     # Commit 3893, Apr. 28 2022
+
+# For Windows: Prevent overriding the parent project's compiler/linker settings
+set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(googletest)
+
 if (${CMAKE_VERSION} VERSION_GREATER "3.2")
         include (CMakePackageConfigHelpers)
         install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/include"
